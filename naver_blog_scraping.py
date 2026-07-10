@@ -1,78 +1,109 @@
-from bs4 import BeautifulSoup
-import requests
-import re
-import time
-import sys
-import os
-import urllib.request
-import json
-from selenium import webdriver
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.keys import Keys
-import pandas as pd
-from dotenv import load_dotenv
+# 1. 네이버 블로그 상세 url 함수 만들기
+import urllib.request    # 웹요청 모듈 
+from bs4 import BeautifulSoup    # html 파싱 모듈 
+from selenium import webdriver   # 브라우저 제어 모듈 
+from selenium.webdriver.chrome.service import Service   # 드라이버 관리 모듈 
+from selenium.webdriver.common.by import By     # 요소 탐색 모듈 
+import time    # 대기 시간 정해주는 모듈 
+from selenium.webdriver.chrome.options import Options
+import subprocess
+from selenium_stealth import stealth
 
-# .env 파일 불러오기
-load_dotenv() 
+def  naver_blog(keyword, n):
 
-# 웹드라이버 설정
-options = webdriver.ChromeOptions()
-options.add_experimental_option("excludeSwitches", ["enable-automation"])
-options.add_experimental_option("useAutomationExtension", False)
+## 자동 시스템에 의해 제어되는 것을 막기 위한 코드 부분 ## 
 
-# 버전에 상관 없이 os에 설치된 크롬 브라우저 사용
-driver = webdriver.Chrome(ChromeDriverManager().install())
-driver.implicitly_wait(3)
-# 버전에 상관 없이 os에 설치된 크롬 브라우저 사용
+    option = Options()
+    driver = webdriver.Chrome(options=option)
 
-# 환경 변수 접근하기
-client_id = os.getenv('client_id')
-client_secret = os.getenv('client_secret')
+    stealth(driver,
+        languages=['en-US', 'en'],
+        vendor='Google Inc.',
+        platform='Win64',
+        webgl_vendor='Intel Inc.',
+        renderer='Intel Iris OpenGL Engine',
+        fix_hairline=True)
 
-# selenium으로 검색 페이지 불러오기 #
-naver_urls = []
-postdate = []
-titles = []
+## -------------------------------------------- ## 
 
-# 검색어 입력
-keyword = input("검색할 키워드를 입력해주세요.") # 공연 이름으로 바꿔야 하는 부분
-encText = urllib.parse.quote(keyword)
+    params = []  # 네이버 블로그의 상세 url을 담는 리스트
+    for i in range(1,  n+1): # 페이지 번호 숫자 제공
+        time.sleep(1) # 블로그에 사진이 많을 경우, 로딩이 오래 걸리므로 대기 시간 부여
+        text1 = urllib.parse.quote(keyword) # 검색 키워드 가져옴
 
-# 검색을 끝낼 페이지 입력
-end = input("\n크롤링을 끝낼 위치를 입력해주세요. (기본값: 1, 최댓값: 100)") # 대극장 기준 리뷰 블로그 개수를 확인해보고 결정
-if end == "":
-    end = 1
-else:
-    end = int(end)
-print("\n 1 ~ ", end, "페이지까지 크롤링을 진행합니다.")
+        # 블로그에 특정 키워드 검색 + 페이지 단위로 구분 -> 해당 페이지에 있는 블로그 글의 상세 주소를 저장하기 위한 것
+        list_url="https://section.blog.naver.com/Search/Post.naver?pageNo=" + str(i) + "&rangeType=ALL&orderBy=sim&keyword=" + text1
 
-# 한번에 가져올 페이지 입력
-display = input("\n한번에 가쟈올 페이지 개수를 입력해주세요. (기본값 : 10, 최댓값 : 100)") # 검색을 끝낼 페이지 기준으로 결정
-if display == "":
-    display = 10
-else:
-    dispaly = int(display)
-print("\n한번에 가져올 페이지 : ", display, "페이지")
+        # 해당 웹 페이지를 열음 
+        driver.get(list_url)
+        time.sleep(2) 
 
-for start in range(end):
-    url = "https://openai.naver.com/v1/search/blog?query=" + encText + "&start=" + str(start+1) + "&display=" + str(display+1) # Json 결과
-    request = urllib.request.Request(url)
-    request.add_header("X-Naver_client-Id".client_id)
-    request.add_header("X-Naver-Client-Secret".client_secret)
-    response = urllib.request.urlopen(request)
-    rescode = response.getcode()
-    if(rescode==200):
-        response_body = response.read()
-        data = json.loads(response_body.decode('urf-8'))['items']
-        for row in data:
-            if('blod.naver' in row['link']):
-                naver_urls.append(row['link'])
-                postdate.append(row['postdata'])
-                title = row['title']
-                # html 태그 제거
-                pattern1 = '<[^>]*>'
-                title = re.sub(pattern=pattern1, repl='', string=title)
-                titles.append(title)
-            time.sleep(2)
-        else:
-            print('Error Code: ' + rescode)
+        # 열린 블로그 리스트의 html을 가져옴
+        html = driver.page_source
+
+        # html 코드를 BS 으로 파싱함 
+        soup = BeautifulSoup(html, "lxml") # html.parser 또는 lxml 을 사용
+
+        # 상세 url(블로그 글 한 개의 url)을 찾음 
+        for i in soup.select('div.desc > a.desc_inner'):
+            params.append(i.get("href"))
+
+    return params # 최종적으로 블로그 글 한 개 한 개의 url을 모두 담은 리스트를 반환함
+    
+# 2. 네이버 블로그 글과 상세 내역 파일 저장
+def naver_blog2(keyword, n):
+    # 첫번째 함수를 실행해서 상세 url 리스트 가져오기
+    result = naver_blog(keyword, n)
+    
+    # 상세 글을 열기 위한 driver
+    option = Options()
+    driver2 = webdriver.Chrome(options=option)
+
+    # 본문을 저장할 파일을 생성
+    f2 = open("C:/Users/SSAFY/OneDrive/Desktop/SSAFY/my_pjt/muplay_recommendation_service/naver_blog.txt", "w", encoding="utf8")
+
+    # 상세 url 을 하나씩 가져와서 여는 부분
+    for  list_url  in  result:
+        driver2.get(list_url)
+        time.sleep(2)  # 페이지 로드 대기 시간 
+
+        # 자바 스크립트로 막혀 있을 지도 모를 html 코드를 보게 하는 부분
+        # 웹페이지에서 ID 가 'mainFrame' 인 HTML 요소를 찾음
+        # mainFrame 의 html 코드가 독립적으로 작동되는 코드이기 때문임
+        # 크롬 개발자 모드에서 iframe 태그를 찾음
+
+        try:
+            element = driver2.find_element(By.ID, 'mainFrame') # mainFrame 찾음 
+            driver2.switch_to.frame(element) 
+            # 현재 페이지의 html 코드를 가져옴
+            html = driver2.page_source
+            # BS 으로  html 코드를 파싱함
+            soup = BeautifulSoup(html, "html.parser")
+
+            # 날짜 검색
+            date2 = soup.select("span.se_publishDate.pcol2")
+            # 본문 검색
+            base2 = soup.select("div.se-module.se-module-text > p")
+
+            # 날짜만 추출
+            # print(date2[0].text.strip()) 
+            date_text = date2[0].text.strip()
+            print(date_text)
+            f2.write(date_text + '\n' )   
+            
+            # 본문 추출
+            for i in base2:
+                con_text = i.text.strip()
+                print(con_text) 
+                f2.write(con_text + '\n')
+                
+            print('\n\n\n')
+            f2.write('\n' + '='*50 + '\n\n')
+            
+        except Exception  as  e:
+            print('iframe 을 찾을 수 없습니다.', e)
+
+    f2.close()  # 텍스트를 파일에 저장
+    
+
+naver_blog2("뮤지컬 레베카", 10)
